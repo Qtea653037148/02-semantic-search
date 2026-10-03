@@ -10,7 +10,7 @@ from dataclasses import dataclass
 class Config:
     # ==================== 数据 ====================
     dataset_name: str = "mteb/LCQMC"
-    max_seq_len: int = 64            # 中文问句一般 10-30 字，64 足够
+    max_seq_len: int = 48            # 中文问句一般 10-30 字，64 足够
     # 注：如果 64 不够，可以改成 96，但对比学习对长序列不敏感
 
     # ==================== 模型 ====================
@@ -26,17 +26,17 @@ class Config:
     pooling: str = "mean"            # 句向量池化方式: mean / cls / max
 
     # ==================== 训练 ====================
-    batch_size: int = 64             # 对比学习喜欢大 batch
+    batch_size: int = 128             # 对比学习喜欢大 batch
     # 4090 25GB 显存，rbt3 训练 batch=128 也够
     # 但先跑 64 稳妥
 
     lr: float = 2e-5
     weight_decay: float = 0.01
-    warmup_ratio: float = 0.1        # 前 10% 步数做 warmup
-    epochs: int = 3
+    warmup_ratio: float = 0.06        # 前 10% 步数做 warmup
+    epochs: int = 4
 
     # 对比学习专用
-    temperature: float = 0.05        # 温度系数 τ，越小分布越尖锐
+    temperature: float = 0.1        # 温度系数 τ，越小分布越尖锐
     use_amp: bool = True             # 混合精度训练（4090 加速）
     grad_accum_steps: int = 1        # 梯度累积
     max_grad_norm: float = 1.0

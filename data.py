@@ -232,3 +232,103 @@ def build_biencoder_loaders(cfg=CFG):
     print(f"[Data] train={len(train_loader.dataset)} "
           f"val={len(val_loader.dataset)} test={len(test_loader.dataset)}")
     return train_loader, val_loader, test_loader, tokenizer
+
+
+# ==================================================================
+# Dataset 4: 三元组（含 hard negative）
+# ==================================================================
+class TripletDataset(Dataset):
+    """
+    BiEncoder 增强版：每个样本返回 (anchor, positive, hard_negative)。
+
+    hard_negative 从 LCQMC 的 score=0 对中采样——这些是"同主题但不同含义"
+    的句子，比 batch 内随机负例难得多。
+    """
+
+    def __init__(self, pos_s1, pos_s2, neg_pool, tokenizer, max_len, seed=42):
+        self.pos_s1 = pos_s1
+        self.pos_s2 = pos_s2
+        self.neg_pool = neg_pool
+        self.tokenizer = tokenizer
+        self.max_len = max_len
+
+        import random
+        rng = random.Random(seed)
+        self.neg_indices = [rng.randint(0, len(neg_pool) - 1)
+                            for _ in range(len(pos_s1))]
+
+    def __len__(self):
+        return len(self.pos_s1)
+
+    def _encode(self, text):
+        enc = self.tokenizer(
+            text, truncation=True, max_length=self.max_len,
+            padding="max_length", return_tensors="pt",
+        )
+        return enc["input_ids"].squeeze(0), enc["attention_mask"].squeeze(0)
+
+    def __getitem__(self, idx):
+        a_ids, a_mask = self._encode(self.pos_s1[idx])
+        p_ids, p_mask = self._encode(self.pos_s2[idx])
+        n_ids, n_mask = self._encode(self.neg_pool[self.neg_indices[idx]])
+        return {
+            "anchor_input_ids": a_ids,
+            "anchor_attention_mask": a_mask,
+            "positive_input_ids": p_ids,
+            "positive_attention_mask": p_mask,
+            "negative_input_ids": n_ids,
+            "negative_attention_mask": n_mask,
+        }
+
+
+def build_biencoder_triplet_loaders(cfg=CFG):
+    """
+    三元组版 BiEncoder DataLoader。
+    """
+    ds = load_lcqmc_raw(cfg)
+    tokenizer = get_tokenizer(cfg)
+
+    # 正例对（作为 anchor-positive）
+    pos_data = ds["train"].filter(lambda x: x["score"] == 1)
+    # 负例池（作为 hard negative）
+    neg_data = ds["train"].filter(lambda x: x["score"] == 0)
+
+    print(f"[Data] 正例对: {len(pos_data)}, 负例池: {len(neg_data)}")
+
+    train_dset = TripletDataset(
+        pos_data["sentence1"], pos_data["sentence2"],
+        neg_data["sentence2"],  # 用 s2 作为 hard negative
+        tokenizer, cfg.max_seq_len,
+    )
+
+    train_loader = DataLoader(
+        train_dset,
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=True,
+    )
+
+    # 验证/测试仍是 pair 数据
+    val_data = ds["validation"]
+    val_dset = PairDataset(
+        val_data["sentence1"], val_data["sentence2"], val_data["score"],
+        tokenizer, cfg.max_seq_len,
+    )
+    val_loader = DataLoader(
+        val_dset, batch_size=cfg.eval_batch_size, shuffle=False,
+        num_workers=4, pin_memory=True,
+    )
+
+    test_data = ds["test"]
+    test_dset = PairDataset(
+        test_data["sentence1"], test_data["sentence2"], test_data["score"],
+        tokenizer, cfg.max_seq_len,
+    )
+    test_loader = DataLoader(
+        test_dset, batch_size=cfg.eval_batch_size, shuffle=False,
+        num_workers=4, pin_memory=True,
+    )
+
+    return train_loader, val_loader, test_loader, tokenizer
